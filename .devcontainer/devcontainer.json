@@ -1,0 +1,17 @@
+{
+  "name": "Xorion Dev Container",
+  "dockerFile": "Dockerfile",
+  "context": "..",
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {}
+  },
+  "postCreateCommand": "cargo update",
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer"
+      ]
+    }
+  }
+}

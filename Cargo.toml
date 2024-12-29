@@ -1,0 +1,13 @@
+[package]
+name = "xorion"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.32", features = ["full"] }
+clap = { version = "4.2", features = ["derive"] }
+once_cell = "1.17"
+rand = "0.8"
+
+[dev-dependencies]
+portpicker = "0.1.1"

@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+    tags:
+      - "v*.*.*" # Matches semantic version tags like v1.0.0
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  # 1) Build and test on native Ubuntu (x86_64)
+  build-and-test-native:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Set up stable Rust
+        uses: dtolnay/rust-toolchain@a54c7afa936fefeb4456b2dd8068152669aa8203
+        with:
+          toolchain: stable
+
+      - name: Build (release) and run tests
+        run: |
+          cargo build --release
+          cargo test
+
+  # 2) Cross-compile for multiple Linux targets (amd64, arm, mips, etc.)
+  cross-build:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Add or remove targets as needed
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - mipsel-unknown-linux-musl
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Decide Rust toolchain
+        id: decide_rust_toolchain
+        run: |
+          if [[ ${{ matrix.target }} == *"musl"* ]]; then
+            echo "toolchain=nightly" >> $GITHUB_OUTPUT
+            echo "flag=-Zbuild-std" >> $GITHUB_OUTPUT
+          else
+            echo "toolchain=stable" >> $GITHUB_OUTPUT
+            echo "flag=" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@a54c7afa936fefeb4456b2dd8068152669aa8203
+        with:
+          toolchain: ${{ steps.decide_rust_toolchain.outputs.toolchain }}
+
+      - name: Install cross
+        run: cargo install cross
+
+      - name: Cross build (release)
+        run: cross build --release --target ${{ matrix.target }} ${{ steps.decide_rust_toolchain.outputs.flag }}
+
+      - name: Compress build artifacts
+        run: |
+          mkdir -p artifacts
+          tar -czvf artifacts/${{ matrix.target }}-release.tar.gz -C target/${{ matrix.target }}/release xorion
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.target }}-release.tar.gz
+          path: artifacts/${{ matrix.target }}-release.tar.gz
+
+  # 3) Create a release with uploaded artifacts
+  release:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: cross-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: /tmp/xorion-artifacts/
+
+      - name: List all files
+        id: list_files
+        run: |
+          echo 'files<<EOF' >> $GITHUB_OUTPUT
+          find /tmp/xorion-artifacts -type f >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@01570a1f39cb168c169c802c3bceb9e93fb10974
+        with:
+          files: ${{ steps.list_files.outputs.files }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
