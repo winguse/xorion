@@ -3,6 +3,7 @@ use std::{net::SocketAddr, time::Duration};
 use super::*;
 use crate::helpers::*;
 use portpicker::pick_unused_port;
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tokio::{
     net::UdpSocket,
     time::{sleep, timeout},
@@ -308,4 +309,105 @@ async fn test_full_e2e_internal(singular: bool) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+pub async fn profiling(singular: bool) {
+    let server_inbound_port1 = pick_unused_port().unwrap();
+    let server_inbound_port2 = pick_unused_port().unwrap();
+    let server_upstream_port = pick_unused_port().unwrap();
+    let client_bind_port = pick_unused_port().unwrap();
+
+    // Fake server upstream
+    let fake_server_upstream = UdpSocket::bind(("127.0.0.1", server_upstream_port))
+        .await
+        .unwrap();
+    println!(
+        "Fake server upstream bound at port {}",
+        fake_server_upstream.local_addr().unwrap()
+    );
+
+    // Spawn real server
+    let server_args = Args {
+        server: true,
+        client: false,
+        singular,
+        bind: format!("{},{}", server_inbound_port1, server_inbound_port2),
+        upstream: format!("127.0.0.1:{}", server_upstream_port),
+        obfuscation_key: "0x12345678".into(),
+        inactivity_timeout_sec: 2,
+        obfuscation_size: TEST_OBFUSCATION_SIZE,
+        pad_size: TEST_PAD_SIZE,
+    };
+    let _server_handle = tokio::spawn(async move {
+        let _ = server::server_main(
+            &server_args,
+            parse_obfuscation_key(&server_args.obfuscation_key),
+        )
+        .await;
+    });
+
+    // Spawn real client
+    let client_args = Args {
+        server: false,
+        client: true,
+        singular,
+        bind: format!("{}", client_bind_port),
+        upstream: format!(
+            "127.0.0.1:{},{}",
+            server_inbound_port1, server_inbound_port2
+        ),
+        obfuscation_key: "0x12345678".into(),
+        inactivity_timeout_sec: 2,
+        obfuscation_size: TEST_OBFUSCATION_SIZE,
+        pad_size: TEST_PAD_SIZE,
+    };
+    let _client_handle = tokio::spawn(async move {
+        let _ = client::client_main(
+            &client_args,
+            parse_obfuscation_key(&client_args.obfuscation_key),
+        )
+        .await;
+    });
+
+    // Local "fake client"
+    let fake_local_client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let client_addr = SocketAddr::new("127.0.0.1".parse().unwrap(), client_bind_port);
+
+    // sleep for a bit to let the server and client start
+    sleep(Duration::from_secs(1)).await;
+
+    let mut message_bytes = [0u8; 1420];
+
+    StdRng::seed_from_u64(0u64).fill_bytes(&mut message_bytes);
+
+    let mut buf = [0u8; 65535];
+
+    for _ in 0..1000000 {
+        // 1) Send local -> client -> server -> upstream
+        fake_local_client
+            .send_to(&message_bytes, client_addr)
+            .await
+            .unwrap();
+
+        let (_, from) = timeout(
+            Duration::from_secs(3),
+            fake_server_upstream.recv_from(&mut buf),
+        )
+        .await
+        .expect("Timed out waiting for data at fake_server_upstream")
+        .expect("Error reading fake_server_upstream");
+
+        // 2) Send upstream -> server -> client -> local
+        fake_server_upstream
+            .send_to(&message_bytes, from)
+            .await
+            .unwrap();
+        let (_, _) = timeout(
+            Duration::from_secs(3),
+            fake_local_client.recv_from(&mut buf),
+        )
+        .await
+        .expect("Timed out waiting for data at fake_local_client")
+        .expect("Error reading fake_local_client");
+    }
 }

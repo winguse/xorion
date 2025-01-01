@@ -2,14 +2,16 @@ mod client;
 mod helpers;
 mod server;
 mod singular;
-#[cfg(test)]
 mod tests;
 
 use clap::Parser;
 use helpers::*;
+use tests::profiling;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    profiling(true).await;
+
     let args = Args::parse();
     let obfuscation_key = parse_obfuscation_key(&args.obfuscation_key);
 
