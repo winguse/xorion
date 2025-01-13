@@ -14,7 +14,8 @@ use crate::helpers::*;
 
 struct InBoundInfo {
     outbound_sock: UdpSocket,
-    last_active_ts: AtomicU32,
+    outbound_last_receive_ts: AtomicU32,
+    inbound_last_receive_ts: AtomicU32,
 }
 
 async fn spawn_outbound_reader(
@@ -56,7 +57,8 @@ async fn spawn_outbound_reader(
             }
 
             // Update the last active timestamp
-            info.last_active_ts.store(now_ts(), Ordering::Relaxed);
+            info.outbound_last_receive_ts
+                .store(now_ts(), Ordering::Relaxed);
 
             // Send the processed buffer to the inbound socket
             let _ = inbound_sock.send_to(&buf[..n], &addr).await;
@@ -93,7 +95,11 @@ pub async fn singular_main(args: &Args, obfuscation_key: u64) {
         // Garbage collect inactive connections
         if now - last_gc_ts > args.inactivity_timeout_sec {
             outbound_map.retain(|_, info| {
-                now - info.last_active_ts.load(Ordering::Relaxed) <= args.inactivity_timeout_sec
+                now - info
+                    .outbound_last_receive_ts
+                    .load(Ordering::Relaxed)
+                    .min(info.inbound_last_receive_ts.load(Ordering::Relaxed))
+                    <= args.inactivity_timeout_sec
             });
             last_gc_ts = now;
         }
@@ -111,7 +117,7 @@ pub async fn singular_main(args: &Args, obfuscation_key: u64) {
 
         let info = match outbound_map.get(&addr) {
             Some(info) => {
-                info.last_active_ts.store(now, Ordering::Relaxed);
+                info.inbound_last_receive_ts.store(now, Ordering::Relaxed);
                 info.clone()
             }
             None => {
@@ -131,7 +137,8 @@ pub async fn singular_main(args: &Args, obfuscation_key: u64) {
                         let _ = outbound_sock.connect(upstream_addresses[0]).await;
                         let info = Arc::new(InBoundInfo {
                             outbound_sock,
-                            last_active_ts: AtomicU32::new(now),
+                            outbound_last_receive_ts: AtomicU32::new(now),
+                            inbound_last_receive_ts: AtomicU32::new(now),
                         });
                         outbound_map.insert(addr, info.clone());
                         spawn_outbound_reader(
