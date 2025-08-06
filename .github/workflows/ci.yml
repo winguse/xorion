@@ -72,7 +72,7 @@ jobs:
           tar -czvf artifacts/${{ matrix.target }}-release.tar.gz -C target/${{ matrix.target }}/release xorion
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-release.tar.gz
           path: artifacts/${{ matrix.target }}-release.tar.gz
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: /tmp/xorion-artifacts/
 
